@@ -1,14 +1,12 @@
 use itertools::Itertools;
 use std::collections::HashSet;
 
-pub struct ExtremeBitmap {}
+pub struct ExtremeBitmap {
+    data: Vec<u8>,
+}
 
 impl ExtremeBitmap {
-    pub fn new() -> Self {
-        ExtremeBitmap {}
-    }
-
-    pub fn extreme_bitmap(&mut self, input: &Vec<u8>) -> Vec<u8> {
+    pub fn from_unsorted_symbols(input: &Vec<u8>) -> Self {
         let mut symbol_counts: [usize; 256] = [0; 256];
         let mut symbol_ranges: [usize; 256] = [0; 256];
 
@@ -32,6 +30,8 @@ impl ExtremeBitmap {
 
         let mut symbols_out_of_place: [usize; 256] = [0; 256];
 
+        let mut cursor = IndexCursor::default();
+
         // If an element in the input vector is out of place, flip the bit corresponding to its position in the bitmap.
         // Else, add its index to the indices_to_skip hash-set
         for (i, n) in input.iter().enumerate() {
@@ -46,14 +46,13 @@ impl ExtremeBitmap {
             let symbol_is_in_wrong_range = i >= current_range_end || i < previous_range_end;
 
             if symbol_is_in_wrong_range {
-                let byte_idx = i / 8;
-                let bit_idx: u8 = (i % 8) as u8;
-
-                initial_bitmap[byte_idx] |= 1 << bit_idx;
+                initial_bitmap[cursor.byte_index] |= 1 << cursor.bit_index;
             } else {
                 indices_to_skip.insert(i);
                 symbols_out_of_place[i] += 1;
             }
+
+            cursor.advance();
         }
 
         let symbols_sorted_by_out_of_place: Vec<usize> = symbols_out_of_place
@@ -78,48 +77,65 @@ impl ExtremeBitmap {
             }
 
             // Up to start_idx
-            for i in 0..start_idx {
+            (0..start_idx).for_each(|i| {
                 if indices_to_skip.contains(&i) {
-                    continue;
+                    return;
                 }
 
                 if input[i] == n as u8 {
                     // TODO: element is n and out of place, add 1 to bitmap
+                    initial_bitmap[cursor.byte_index] |= 1 << cursor.bit_index;
                     indices_to_skip.insert(i);
                 } else {
                     // TODO: element is not n, add 0 to bitmap
                 }
-            }
+
+                cursor.advance();
+            });
 
             //From end_idx
-            for i in end_idx..input.len() {
+            (end_idx..input.len()).for_each(|i| {
                 if indices_to_skip.contains(&i) {
-                    continue;
+                    return;
                 }
 
                 if input[i] == n as u8 {
                     // TODO: element is n and out of place, add 1 to bitmap
+                    initial_bitmap[cursor.byte_index] |= 1 << cursor.bit_index;
                     indices_to_skip.insert(i);
                 } else {
                     // TODO: element is not n, add 0 to bitmap
                 }
-            }
+
+                cursor.advance();
+            });
         }
 
-        initial_bitmap
+        ExtremeBitmap {
+            data: initial_bitmap,
+        }
+
+        // TODO: concatenate bitmaps
     }
 }
 
-impl Default for ExtremeBitmap {
-    fn default() -> Self {
-        Self::new()
+#[derive(Default, Debug)]
+struct IndexCursor {
+    bit_index: u8,
+    byte_index: usize,
+    internal_index: usize,
+}
+
+impl IndexCursor {
+    pub fn advance(&mut self) {
+        self.internal_index += 1;
+        self.byte_index = self.internal_index / 8;
+        self.bit_index = (self.internal_index % 8) as u8;
     }
 }
 
 fn main() {
-    let mut x = ExtremeBitmap::default();
+    let extreme_bitmap = ExtremeBitmap::from_unsorted_symbols(&vec![2, 3, 1]);
 
-    let res = x.extreme_bitmap(&vec![1, 2, 3]);
-
-    println!("{:?}", res);
+    println!("{:?}", extreme_bitmap.data);
 }
