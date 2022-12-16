@@ -137,7 +137,7 @@ impl IndexCursor {
     pub fn advance(&mut self) {
         self.internal_index += 1;
         self.byte_index = self.internal_index / 8;
-        self.bit_index = (self.internal_index % 8) as u8;
+        self.bit_index = (self.internal_index & 7) as u8;
     }
 }
 
