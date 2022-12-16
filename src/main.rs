@@ -65,6 +65,15 @@ impl ExtremeBitmap {
         for n in symbols_sorted_by_out_of_place {
             let n_symbols = symbol_counts[n];
 
+            // We will need this amount of bits to represent this range.
+            let range_len_bits = input.len() - indices_to_skip.len() - symbol_counts[n];
+
+            if symbol_counts[n] == 0 {
+                continue;
+            }
+
+            initial_bitmap.extend_n_bits(range_len_bits);
+
             let start_idx = if n > 0 { symbol_ranges[n - 1] } else { 0 };
             let end_idx = if n < 255 {
                 symbol_ranges[n]
@@ -114,8 +123,6 @@ impl ExtremeBitmap {
         ExtremeBitmap {
             data: initial_bitmap,
         }
-
-        // TODO: concatenate bitmaps
     }
 }
 
@@ -134,8 +141,21 @@ impl IndexCursor {
     }
 }
 
+trait ExtendBits {
+    fn extend_n_bits(&mut self, n_bits: usize);
+}
+
+// Can be optimized slightly by taking cursor position into account, but the few potential excess bytes allocated can be shaved off in the end of the procedure.
+impl ExtendBits for Vec<u8> {
+    fn extend_n_bits(&mut self, n_bits: usize) {
+        let n_bytes = (n_bits / 8) + 1;
+
+        self.extend_from_slice(&vec![0; n_bytes]);
+    }
+}
+
 fn main() {
-    let extreme_bitmap = ExtremeBitmap::from_unsorted_symbols(&vec![2, 3, 1]);
+    let extreme_bitmap = ExtremeBitmap::from_unsorted_symbols(&vec![2, 3, 1, 5, 2, 2]);
 
     println!("{:?}", extreme_bitmap.data);
 }
