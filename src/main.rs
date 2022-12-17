@@ -47,9 +47,9 @@ impl ExtremeBitmap {
 
             if symbol_is_in_wrong_range {
                 initial_bitmap[cursor.byte_index] |= 1 << cursor.bit_index;
+                symbols_out_of_place[*n as usize] += 1;
             } else {
                 indices_to_skip.insert(i);
-                symbols_out_of_place[i] += 1;
             }
 
             cursor.advance();
@@ -58,11 +58,11 @@ impl ExtremeBitmap {
         let symbols_sorted_by_out_of_place: Vec<usize> = symbols_out_of_place
             .into_iter()
             .enumerate()
-            .sorted_by(|a, b| Ord::cmp(&a.1, &b.1))
+            .sorted_by(|a, b| Ord::cmp(&b.1, &a.1))
             .map(|x| x.0)
             .collect();
 
-        for n in symbols_sorted_by_out_of_place {
+        for n in symbols_sorted_by_out_of_place.clone() {
             let n_symbols = symbol_counts[n];
 
             // We will need this amount of bits to represent this range.
@@ -72,7 +72,7 @@ impl ExtremeBitmap {
                 continue;
             }
 
-            initial_bitmap.extend_n_bits(range_len_bits);
+            initial_bitmap.extend_at_least_n_bits(range_len_bits);
 
             let start_idx = if n > 0 { symbol_ranges[n - 1] } else { 0 };
             let end_idx = if n < 255 {
@@ -95,8 +95,6 @@ impl ExtremeBitmap {
                     // TODO: element is n and out of place, add 1 to bitmap
                     initial_bitmap[cursor.byte_index] |= 1 << cursor.bit_index;
                     indices_to_skip.insert(i);
-                } else {
-                    // TODO: element is not n, add 0 to bitmap
                 }
 
                 cursor.advance();
@@ -112,16 +110,16 @@ impl ExtremeBitmap {
                     // TODO: element is n and out of place, add 1 to bitmap
                     initial_bitmap[cursor.byte_index] |= 1 << cursor.bit_index;
                     indices_to_skip.insert(i);
-                } else {
-                    // TODO: element is not n, add 0 to bitmap
                 }
 
                 cursor.advance();
             });
         }
 
+        let header = ExtremeBitmapHeader::new(&symbol_counts, &symbols_sorted_by_out_of_place);
+
         ExtremeBitmap {
-            data: initial_bitmap,
+            data: [header.into(), initial_bitmap].concat(),
         }
     }
 }
@@ -133,21 +131,113 @@ struct IndexCursor {
     internal_index: usize,
 }
 
+#[derive(Clone)]
+struct ExtremeBitmapHeader {
+    symbol_counts_size_flag: SymbolCountSizeFlag,
+    symbol_counts: Vec<u8>,
+    symbols_sorted_by_amount_out_of_place: Vec<u8>,
+}
+
+impl ExtremeBitmapHeader {
+    fn new(symbol_counts: &[usize], symbols_sorted_by_amount_out_of_place: &[usize]) -> Self {
+        let max_count = symbol_counts
+            .iter()
+            .max()
+            .expect("Symbols counts cannot be empty");
+
+        let symbol_counts_size_flag = SymbolCountSizeFlag::from_max_count(*max_count);
+
+        let symbol_counts = symbol_counts
+            .iter()
+            .flat_map(|count| count.to_ne_bytes())
+            .collect_vec();
+        let symbols_sorted_by_amount_out_of_place = symbols_sorted_by_amount_out_of_place
+            .iter()
+            .map(|n| *n as u8)
+            .collect_vec();
+
+        Self {
+            symbol_counts_size_flag,
+            symbol_counts,
+            symbols_sorted_by_amount_out_of_place,
+        }
+    }
+}
+
+impl Into<Vec<u8>> for ExtremeBitmapHeader {
+    fn into(self) -> Vec<u8> {
+        [
+            vec![self.symbol_counts_size_flag.as_byte_flag()],
+            self.symbol_counts,
+            self.symbols_sorted_by_amount_out_of_place,
+        ]
+        .concat()
+    }
+}
+
+#[derive(Clone, Copy)]
+enum SymbolCountSizeFlag {
+    OneByte,
+    TwoByte,
+    ThreeByte,
+    FourByte,
+    LargerThanFourByte,
+}
+
+const ONE_BYTE_MAX: usize = 255;
+const TWO_BYTE_MAX: usize = 65535;
+const THREE_BYTE_MAX: usize = 16777215;
+const FOUR_BYTE_MAX: usize = 4294967295;
+
+impl SymbolCountSizeFlag {
+    fn from_max_count(max_count: usize) -> Self {
+        return if max_count <= ONE_BYTE_MAX {
+            Self::OneByte
+        } else if max_count <= TWO_BYTE_MAX {
+            Self::TwoByte
+        } else if max_count <= THREE_BYTE_MAX {
+            Self::ThreeByte
+        } else if max_count <= FOUR_BYTE_MAX {
+            Self::FourByte
+        } else {
+            Self::LargerThanFourByte
+        };
+    }
+
+    fn as_byte_flag(&self) -> u8 {
+        match self {
+            SymbolCountSizeFlag::OneByte => 1,
+            SymbolCountSizeFlag::TwoByte => 2,
+            SymbolCountSizeFlag::ThreeByte => 4,
+            SymbolCountSizeFlag::FourByte => 8,
+            SymbolCountSizeFlag::LargerThanFourByte => 128,
+        }
+    }
+}
+
 impl IndexCursor {
     pub fn advance(&mut self) {
         self.internal_index += 1;
         self.byte_index = self.internal_index / 8;
-        self.bit_index = (self.internal_index & 7) as u8;
+        self.bit_index = (self.internal_index & 7) as u8; // Same as modulo 8, but faster
+    }
+
+    pub fn bit_count(&self) -> usize {
+        self.byte_index * 8 + (self.bit_index as usize)
+    }
+
+    pub fn byte_count(&self) -> usize {
+        self.byte_index + 1 + if self.bit_index > 0 { 1 } else { 0 }
     }
 }
 
 trait ExtendBits {
-    fn extend_n_bits(&mut self, n_bits: usize);
+    fn extend_at_least_n_bits(&mut self, n_bits: usize);
 }
 
 // Can be optimized slightly by taking cursor position into account, but the few potential excess bytes allocated can be shaved off in the end of the procedure.
 impl ExtendBits for Vec<u8> {
-    fn extend_n_bits(&mut self, n_bits: usize) {
+    fn extend_at_least_n_bits(&mut self, n_bits: usize) {
         let n_bytes = (n_bits / 8) + 1;
 
         self.extend_from_slice(&vec![0; n_bytes]);
@@ -155,7 +245,7 @@ impl ExtendBits for Vec<u8> {
 }
 
 fn main() {
-    let extreme_bitmap = ExtremeBitmap::from_unsorted_symbols(&vec![2, 3, 1, 5, 2, 2]);
+    let extreme_bitmap = ExtremeBitmap::from_unsorted_symbols(&vec![3, 3, 3, 2, 2, 1]);
 
     println!("{:?}", extreme_bitmap.data);
 }
