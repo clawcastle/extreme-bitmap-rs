@@ -6,7 +6,7 @@ pub struct ExtremeBitmap {
 }
 
 impl ExtremeBitmap {
-    pub fn from_unsorted_symbols(input: &Vec<u8>) -> Self {
+    pub fn transform_memory(input: &[u8]) -> Self {
         let mut symbol_counts: [usize; 256] = [0; 256];
         let mut symbol_ranges: [usize; 256] = [0; 256];
 
@@ -118,9 +118,10 @@ impl ExtremeBitmap {
 
         let header = ExtremeBitmapHeader::new(&symbol_counts, &symbols_sorted_by_out_of_place);
 
-        ExtremeBitmap {
-            data: [header.into(), initial_bitmap].concat(),
-        }
+        let header_serialized: Vec<u8> = header.into();
+        let data = [&header_serialized, &initial_bitmap[..cursor.byte_count()]].concat();
+
+        ExtremeBitmap { data }
     }
 }
 
@@ -133,7 +134,7 @@ struct IndexCursor {
 
 #[derive(Clone)]
 struct ExtremeBitmapHeader {
-    symbol_counts_size_flag: SymbolCountSizeFlag,
+    symbol_counts_size_flag: SymbolCountByteSizeFlag,
     symbol_counts: Vec<u8>,
     symbols_sorted_by_amount_out_of_place: Vec<u8>,
 }
@@ -145,7 +146,7 @@ impl ExtremeBitmapHeader {
             .max()
             .expect("Symbols counts cannot be empty");
 
-        let symbol_counts_size_flag = SymbolCountSizeFlag::from_max_count(*max_count);
+        let symbol_counts_size_flag = SymbolCountByteSizeFlag::from_max_count(*max_count);
 
         let symbol_counts = symbol_counts
             .iter()
@@ -164,24 +165,24 @@ impl ExtremeBitmapHeader {
     }
 }
 
-impl Into<Vec<u8>> for ExtremeBitmapHeader {
-    fn into(self) -> Vec<u8> {
+impl From<ExtremeBitmapHeader> for Vec<u8> {
+    fn from(val: ExtremeBitmapHeader) -> Self {
         [
-            vec![self.symbol_counts_size_flag.as_byte_flag()],
-            self.symbol_counts,
-            self.symbols_sorted_by_amount_out_of_place,
+            vec![val.symbol_counts_size_flag.as_byte_flag()],
+            val.symbol_counts,
+            val.symbols_sorted_by_amount_out_of_place,
         ]
         .concat()
     }
 }
 
 #[derive(Clone, Copy)]
-enum SymbolCountSizeFlag {
-    OneByte,
-    TwoByte,
-    ThreeByte,
-    FourByte,
-    LargerThanFourByte,
+enum SymbolCountByteSizeFlag {
+    One,
+    Two,
+    Three,
+    Four,
+    LargerThanFour,
 }
 
 const ONE_BYTE_MAX: usize = 255;
@@ -189,28 +190,28 @@ const TWO_BYTE_MAX: usize = 65535;
 const THREE_BYTE_MAX: usize = 16777215;
 const FOUR_BYTE_MAX: usize = 4294967295;
 
-impl SymbolCountSizeFlag {
+impl SymbolCountByteSizeFlag {
     fn from_max_count(max_count: usize) -> Self {
-        return if max_count <= ONE_BYTE_MAX {
-            Self::OneByte
+        if max_count <= ONE_BYTE_MAX {
+            Self::One
         } else if max_count <= TWO_BYTE_MAX {
-            Self::TwoByte
+            Self::Two
         } else if max_count <= THREE_BYTE_MAX {
-            Self::ThreeByte
+            Self::Three
         } else if max_count <= FOUR_BYTE_MAX {
-            Self::FourByte
+            Self::Four
         } else {
-            Self::LargerThanFourByte
-        };
+            Self::LargerThanFour
+        }
     }
 
     fn as_byte_flag(&self) -> u8 {
         match self {
-            SymbolCountSizeFlag::OneByte => 1,
-            SymbolCountSizeFlag::TwoByte => 2,
-            SymbolCountSizeFlag::ThreeByte => 4,
-            SymbolCountSizeFlag::FourByte => 8,
-            SymbolCountSizeFlag::LargerThanFourByte => 128,
+            SymbolCountByteSizeFlag::One => 1,
+            SymbolCountByteSizeFlag::Two => 2,
+            SymbolCountByteSizeFlag::Three => 4,
+            SymbolCountByteSizeFlag::Four => 8,
+            SymbolCountByteSizeFlag::LargerThanFour => 128,
         }
     }
 }
@@ -245,7 +246,8 @@ impl ExtendBits for Vec<u8> {
 }
 
 fn main() {
-    let extreme_bitmap = ExtremeBitmap::from_unsorted_symbols(&vec![3, 3, 3, 2, 2, 1]);
+    let input = vec![3, 3, 3, 2, 2, 1];
+    let extreme_bitmap = ExtremeBitmap::transform_memory(&input);
 
     println!("{:?}", extreme_bitmap.data);
 }
